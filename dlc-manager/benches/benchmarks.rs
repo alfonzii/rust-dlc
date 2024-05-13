@@ -4,7 +4,11 @@ use bitcoin::ScriptBuf;
 use bitcoin::WPubkeyHash;
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
 use dlc::create_dlc_transactions;
+use dlc::secp_utils::schnorr_pubkey_to_pubkey;
+use dlc::secp_utils::schnorrsig_compute_sig_point;
+use dlc::secp_utils::sum_compute_sig_point;
 use dlc::DlcTransactions;
+use dlc::OracleInfo;
 use dlc::PartyParams;
 use dlc::Payout;
 use dlc::TxInputInfo;
@@ -22,6 +26,9 @@ use dlc_messages::oracle_msgs::DigitDecompositionEventDescriptor;
 use dlc_messages::oracle_msgs::EventDescriptor;
 use dlc_messages::oracle_msgs::OracleAnnouncement;
 use dlc_messages::oracle_msgs::OracleEvent;
+use secp256k1_zkp::rand;
+use secp256k1_zkp::Message;
+use secp256k1_zkp::PublicKey;
 use secp256k1_zkp::{
     global::SECP256K1, rand::thread_rng, schnorr::Signature, KeyPair, SecretKey, XOnlyPublicKey,
 };
@@ -284,9 +291,114 @@ pub fn verify_bench(c: &mut Criterion) {
     });
 }
 
+// -------------------------------- MY FUNCTIONS FOR BENCHMARKING PURPOSES ------------------------------------------------------
+
+const NB_PUBKEYS: usize = 32;
+
+fn generate_oracle_info(nb_nonces: usize) -> OracleInfo {
+    let public_key = KeyPair::new(SECP256K1, &mut thread_rng())
+        .x_only_public_key()
+        .0;
+
+    let mut nonces = Vec::with_capacity(nb_nonces);
+    for _ in 0..nb_nonces {
+        nonces.push(
+            KeyPair::new(SECP256K1, &mut thread_rng())
+                .x_only_public_key()
+                .0,
+        );
+    }
+
+    OracleInfo { public_key, nonces }
+}
+
+fn generate_oracle_infos(nb_oracles: usize, nb_nonces: usize) -> Vec<OracleInfo> {
+    (0..nb_oracles)
+        .map(|_| generate_oracle_info(nb_nonces))
+        .collect()
+}
+
+fn generate_256_messages() -> Vec<Message> {
+    let mut messages: Vec<Message> = Vec::new();
+    for _ in 0..256 {
+        let mut buf = [0u8; 32];
+        for byte in &mut buf {
+            *byte = rand::random::<u8>();
+        }
+        messages.push(Message::from_slice(&buf).unwrap());
+    }
+    messages
+}
+
+/// Extract and filter public keys from oracle info vector based on message 1 and 0 values.
+/// If message\[i\] == 1, then add oracle_infos\[i\] to the output vector.
+fn extract_filter_pubkeys_from_oracleinfos(
+    oracle_infos: &[OracleInfo],
+    message: &Message,
+) -> Vec<PublicKey> {
+    let vec_public_keys: Vec<PublicKey> = oracle_infos
+        .iter()
+        .enumerate()
+        .filter(|&(i, _)| message[i] == 1)
+        .map(|(_, info)| {
+            let schnorr_pubkey = &info.public_key;
+            schnorr_pubkey_to_pubkey(schnorr_pubkey).unwrap()
+        })
+        .collect();
+    vec_public_keys
+}
+
+pub fn std_anticipation_bench(c: &mut Criterion) {
+    let oracle_infos = generate_oracle_infos(1, 1);
+    let oracle_info = &oracle_infos[0];
+
+    let messages = generate_256_messages();
+    let msgs_len = messages.len();
+
+    let nonce = &oracle_info.nonces[0];
+    let public_key = oracle_info.public_key;
+
+    c.bench_function("std_anticipation", |b| {
+        b.iter(|| {
+            schnorrsig_compute_sig_point(
+                SECP256K1,
+                &public_key,
+                nonce,
+                messages.get(rand::random::<usize>() % msgs_len).unwrap(),
+            )
+        });
+    });
+}
+
+pub fn sum_anticipation_bench(c: &mut Criterion) {
+    let oracle_infos = generate_oracle_infos(NB_PUBKEYS, 1);
+    // To test a worst case scenario, we put here just messages with all bytes set to 1
+    // so we have to use all public keys
+    let array: [u8; 32] = [
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
+        1, 1,
+    ];
+    let msg = Message::from_slice(&array).unwrap();
+
+    let nonce = &oracle_infos[0].nonces[0];
+    let pk_nonce = schnorr_pubkey_to_pubkey(nonce).unwrap();
+
+    let mut vec_public_keys: Vec<PublicKey> =
+        extract_filter_pubkeys_from_oracleinfos(&oracle_infos, &msg);
+    vec_public_keys.push(pk_nonce);
+
+    let vec_refs_pks_nonce: Vec<&PublicKey> = vec_public_keys.iter().collect();
+
+    c.bench_function("sum_anticipation", |b| {
+        b.iter(|| sum_compute_sig_point(SECP256K1, &vec_refs_pks_nonce));
+    });
+}
+
+// ------------------------------------------------------------------------------------------------------------------------------
+
 criterion_group! {
     name = sign_verify_bench;
-    config = Criterion::default().measurement_time(std::time::Duration::new(120, 0)).sample_size(10);
-    targets = sign_bench, verify_bench
+    config = Criterion::default().measurement_time(std::time::Duration::new(5, 0)).sample_size(10);
+    targets = std_anticipation_bench, sum_anticipation_bench//sign_bench, verify_bench
 }
 criterion_main!(sign_verify_bench);

@@ -70,6 +70,14 @@ pub fn schnorrsig_compute_sig_point<C: Verification>(
     Ok(npk.combine(&tweaked)?)
 }
 
+/// Compute an anticipation point using sum method for the given public keys, nonce and message.
+pub fn sum_compute_sig_point<C: Verification>(
+    _secp: &Secp256k1<C>,
+    pk_refs_nonce: &[&PublicKey], // The public keys and nonce in one array
+) -> Result<PublicKey, Error> {
+    Ok(PublicKey::combine_keys(&pk_refs_nonce)?)
+}
+
 /// Decompose a bip340 signature into a nonce and a secret key (as byte array)
 pub fn schnorrsig_decompose(
     signature: &SchnorrSignature,
@@ -102,7 +110,16 @@ fn create_schnorr_hash(msg: &Message, nonce: &XOnlyPublicKey, pubkey: &XOnlyPubl
     BIP340Hash::hash(&buf).to_byte_array()
 }
 
-fn schnorr_pubkey_to_pubkey(schnorr_pubkey: &XOnlyPublicKey) -> Result<PublicKey, Error> {
+/// Converts a Schnorr public key to a regular public key.
+///
+/// # Arguments
+///
+/// * `schnorr_pubkey` - The Schnorr public key to convert
+///
+/// # Returns
+///
+/// The converted regular public key
+pub fn schnorr_pubkey_to_pubkey(schnorr_pubkey: &XOnlyPublicKey) -> Result<PublicKey, Error> {
     let mut buf = Vec::<u8>::with_capacity(33);
     buf.push(0x02);
     buf.extend(schnorr_pubkey.serialize());
