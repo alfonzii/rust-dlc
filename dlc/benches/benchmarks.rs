@@ -5,10 +5,10 @@ extern crate bitcoin_test_utils;
 extern crate dlc;
 extern crate rayon;
 extern crate secp256k1_zkp;
-#[cfg(all(test, feature = "unstable"))]
-extern crate test;
+//#[cfg(all(test, feature = "unstable"))]
+//extern crate test;
 
-#[cfg(all(test, feature = "unstable"))]
+//#[cfg(all(test, feature = "unstable"))]
 mod benches {
 
     use bitcoin::{ScriptBuf, Transaction};
@@ -16,10 +16,12 @@ mod benches {
     use dlc::*;
     use rayon::prelude::*;
     use secp256k1_zkp::{
-        global::SECP256K1, rand::thread_rng, rand::RngCore, KeyPair, Message, PublicKey, SecretKey,
+        global::SECP256K1,
+        rand::{self, thread_rng, RngCore},
+        KeyPair, Message, PublicKey, SecretKey,
     };
 
-    use test::{black_box, Bencher};
+    //use test::{black_box, Bencher};
 
     const SINGLE_NB_ORACLES: usize = 1;
     const SINGLE_NB_NONCES: usize = 10;
@@ -131,109 +133,109 @@ mod benches {
         )
     }
 
-    /// Create a single adaptor signature including both the signature itself and the
-    /// aggregated anticipation point (base case).
-    #[bench]
-    fn bench_create_single_adaptor_sig_including_aggregated_point(b: &mut Bencher) {
-        let oracle_infos = generate_oracle_infos(SINGLE_NB_ORACLES, SINGLE_NB_NONCES);
-        let seckey = SecretKey::new(&mut thread_rng());
-        let cet = cet();
+    // /// Create a single adaptor signature including both the signature itself and the
+    // /// aggregated anticipation point (base case).
+    // #[bench]
+    // fn bench_create_single_adaptor_sig_including_aggregated_point(b: &mut Bencher) {
+    //     let oracle_infos = generate_oracle_infos(SINGLE_NB_ORACLES, SINGLE_NB_NONCES);
+    //     let seckey = SecretKey::new(&mut thread_rng());
+    //     let cet = cet();
 
-        b.iter(|| {
-            black_box(
-                create_cet_adaptor_sig_from_oracle_info(
-                    SECP256K1,
-                    &cet,
-                    &oracle_infos,
-                    &seckey,
-                    &funding_script_pubkey(),
-                    cet.output[0].value,
-                    &generate_single_outcome_messages(SINGLE_NB_ORACLES, SINGLE_NB_NONCES),
-                )
-                .unwrap(),
-            );
-        })
-    }
+    //     b.iter(|| {
+    //         black_box(
+    //             create_cet_adaptor_sig_from_oracle_info(
+    //                 SECP256K1,
+    //                 &cet,
+    //                 &oracle_infos,
+    //                 &seckey,
+    //                 &funding_script_pubkey(),
+    //                 cet.output[0].value,
+    //                 &generate_single_outcome_messages(SINGLE_NB_ORACLES, SINGLE_NB_NONCES),
+    //             )
+    //             .unwrap(),
+    //         );
+    //     })
+    // }
 
-    /// Create an adaptor signature directly from the aggregated anticipation point.
-    #[bench]
-    fn bench_create_single_adaptor_sig_from_aggregated_point(b: &mut Bencher) {
-        let seckey = SecretKey::new(&mut thread_rng());
-        let cet = cet();
-        let adaptor_point = &PublicKey::from_secret_key(SECP256K1, &seckey);
+    // /// Create an adaptor signature directly from the aggregated anticipation point.
+    // #[bench]
+    // fn bench_create_single_adaptor_sig_from_aggregated_point(b: &mut Bencher) {
+    //     let seckey = SecretKey::new(&mut thread_rng());
+    //     let cet = cet();
+    //     let adaptor_point = &PublicKey::from_secret_key(SECP256K1, &seckey);
 
-        b.iter(|| {
-            black_box(
-                create_cet_adaptor_sig_from_point(
-                    SECP256K1,
-                    &cet,
-                    adaptor_point,
-                    &seckey,
-                    &funding_script_pubkey(),
-                    cet.output[0].value,
-                )
-                .unwrap(),
-            )
-        })
-    }
+    //     b.iter(|| {
+    //         black_box(
+    //             create_cet_adaptor_sig_from_point(
+    //                 SECP256K1,
+    //                 &cet,
+    //                 adaptor_point,
+    //                 &seckey,
+    //                 &funding_script_pubkey(),
+    //                 cet.output[0].value,
+    //             )
+    //             .unwrap(),
+    //         )
+    //     })
+    // }
 
-    /// Create only the aggregated anticipation point.
-    #[bench]
-    fn bench_compute_aggregated_point(b: &mut Bencher) {
-        let oracle_infos = generate_oracle_infos(SINGLE_NB_ORACLES, SINGLE_NB_NONCES);
-        let msgs = generate_single_outcome_messages(SINGLE_NB_ORACLES, SINGLE_NB_NONCES);
+    // /// Create only the aggregated anticipation point.
+    // #[bench]
+    // fn bench_compute_aggregated_point(b: &mut Bencher) {
+    //     let oracle_infos = generate_oracle_infos(SINGLE_NB_ORACLES, SINGLE_NB_NONCES);
+    //     let msgs = generate_single_outcome_messages(SINGLE_NB_ORACLES, SINGLE_NB_NONCES);
 
-        b.iter(|| get_adaptor_point_from_oracle_info(SECP256K1, &oracle_infos, &msgs).unwrap())
-    }
+    //     b.iter(|| get_adaptor_point_from_oracle_info(SECP256K1, &oracle_infos, &msgs).unwrap())
+    // }
 
-    /// Create all possible aggregated anticipation points without any optimization (base case).
-    #[bench]
-    fn bench_create_all_aggregated_point_base(b: &mut Bencher) {
-        let oracle_infos = generate_oracle_infos(ALL_NB_ORACLES, ALL_NB_NONCES);
-        let all_msgs = generate_all_messages(ALL_NB_ORACLES, ALL_NB_NONCES, ALL_BASE);
+    // /// Create all possible aggregated anticipation points without any optimization (base case).
+    // #[bench]
+    // fn bench_create_all_aggregated_point_base(b: &mut Bencher) {
+    //     let oracle_infos = generate_oracle_infos(ALL_NB_ORACLES, ALL_NB_NONCES);
+    //     let all_msgs = generate_all_messages(ALL_NB_ORACLES, ALL_NB_NONCES, ALL_BASE);
 
-        b.iter(|| {
-            compute_all_aggregated_points_base(&all_msgs, &oracle_infos);
-        });
-    }
+    //     b.iter(|| {
+    //         compute_all_aggregated_points_base(&all_msgs, &oracle_infos);
+    //     });
+    // }
 
-    /// Create all possible aggregated anticipation points, pre-computing the anticipation points
-    /// for each digits (pre-computation optimization).
-    #[bench]
-    fn bench_create_all_aggregated_point_pre_compute(b: &mut Bencher) {
-        let oracle_infos = generate_oracle_infos(ALL_NB_ORACLES, ALL_NB_NONCES);
-        let msgs: Vec<Vec<Message>> = generate_messages_for_precompute(ALL_NB_NONCES, ALL_BASE);
+    // /// Create all possible aggregated anticipation points, pre-computing the anticipation points
+    // /// for each digits (pre-computation optimization).
+    // #[bench]
+    // fn bench_create_all_aggregated_point_pre_compute(b: &mut Bencher) {
+    //     let oracle_infos = generate_oracle_infos(ALL_NB_ORACLES, ALL_NB_NONCES);
+    //     let msgs: Vec<Vec<Message>> = generate_messages_for_precompute(ALL_NB_NONCES, ALL_BASE);
 
-        b.iter(|| compute_all_aggregated_points_precompute(&oracle_infos, &msgs));
-    }
+    //     b.iter(|| compute_all_aggregated_points_precompute(&oracle_infos, &msgs));
+    // }
 
-    #[bench]
-    fn bench_create_all_aggregated_point_pre_compute_parallelize(b: &mut Bencher) {
-        let oracle_infos = generate_oracle_infos(ALL_NB_ORACLES, ALL_NB_NONCES);
-        let msgs: Vec<Vec<Message>> = generate_messages_for_precompute(ALL_NB_NONCES, ALL_BASE);
+    // #[bench]
+    // fn bench_create_all_aggregated_point_pre_compute_parallelize(b: &mut Bencher) {
+    //     let oracle_infos = generate_oracle_infos(ALL_NB_ORACLES, ALL_NB_NONCES);
+    //     let msgs: Vec<Vec<Message>> = generate_messages_for_precompute(ALL_NB_NONCES, ALL_BASE);
 
-        b.iter(|| compute_all_aggregated_points_precompute_parallelize(&oracle_infos, &msgs));
-    }
+    //     b.iter(|| compute_all_aggregated_points_precompute_parallelize(&oracle_infos, &msgs));
+    // }
 
-    /// Create all possible aggregated anticipation points, using pre-computation as well as memoization.
-    #[bench]
-    fn bench_create_all_aggregated_point_pre_compute_memoize(b: &mut Bencher) {
-        let oracle_infos = generate_oracle_infos(ALL_NB_ORACLES, ALL_NB_NONCES);
-        let msgs: Vec<Vec<Message>> = generate_messages_for_precompute(ALL_NB_NONCES, ALL_BASE);
+    // /// Create all possible aggregated anticipation points, using pre-computation as well as memoization.
+    // #[bench]
+    // fn bench_create_all_aggregated_point_pre_compute_memoize(b: &mut Bencher) {
+    //     let oracle_infos = generate_oracle_infos(ALL_NB_ORACLES, ALL_NB_NONCES);
+    //     let msgs: Vec<Vec<Message>> = generate_messages_for_precompute(ALL_NB_NONCES, ALL_BASE);
 
-        b.iter(|| compute_all_aggregated_points_precompute_memoize(&oracle_infos, &msgs));
-    }
+    //     b.iter(|| compute_all_aggregated_points_precompute_memoize(&oracle_infos, &msgs));
+    // }
 
-    /// Create all possible aggregated anticipation points, using pre-computation and memoization.
-    /// This differs from the above one in that it performs memoization on the aggregation of the anticipation
-    /// points for each digit across all oracles.
-    #[bench]
-    fn bench_create_all_aggregated_point_pre_compute_memoize2(b: &mut Bencher) {
-        let oracle_infos = generate_oracle_infos(ALL_NB_ORACLES, ALL_NB_NONCES);
-        let msgs: Vec<Vec<Message>> = generate_messages_for_precompute(ALL_NB_NONCES, ALL_BASE);
+    // /// Create all possible aggregated anticipation points, using pre-computation and memoization.
+    // /// This differs from the above one in that it performs memoization on the aggregation of the anticipation
+    // /// points for each digit across all oracles.
+    // #[bench]
+    // fn bench_create_all_aggregated_point_pre_compute_memoize2(b: &mut Bencher) {
+    //     let oracle_infos = generate_oracle_infos(ALL_NB_ORACLES, ALL_NB_NONCES);
+    //     let msgs: Vec<Vec<Message>> = generate_messages_for_precompute(ALL_NB_NONCES, ALL_BASE);
 
-        b.iter(|| compute_all_aggregated_points_precompute_memoize2(&oracle_infos, &msgs));
-    }
+    //     b.iter(|| compute_all_aggregated_points_precompute_memoize2(&oracle_infos, &msgs));
+    // }
 
     /// Verify that optimized and base case yield the same result.
     #[test]
@@ -420,4 +422,62 @@ mod benches {
             }
         }
     }
+
+    // --------------------------------------------------- MY FUNCTIONS AS TESTS FOR DEBUGGING REASON ------------------------------------------------------
+
+    #[test]
+    pub fn std_anticipation_test() {
+        let mut buf = [0u8; 32];
+        for byte in &mut buf {
+            *byte = rand::random::<u8>() % 2;
+        }
+
+        let msg = Message::from_slice(&buf).unwrap();
+        let oracle_infos = generate_oracle_infos(1, 1);
+        let oracle_info = &oracle_infos[0];
+
+        let public_key = oracle_info.public_key;
+        let nonce = &oracle_info.nonces[0];
+
+        let std_anticipation_point =
+            secp_utils::schnorrsig_compute_sig_point(SECP256K1, &public_key, nonce, &msg);
+
+        // if anticipation_point didn't end in error then it's a valid point and the test passes
+        assert!(std_anticipation_point.is_ok());
+    }
+
+    // #[test]
+    // pub fn sum_anticipation_test() {
+    //     const MSG_SIZE: usize = 32;
+    //     let oracle_infos = generate_oracle_infos(MSG_SIZE, 1);
+    //     let nonce = &oracle_infos[0].nonces[0];
+
+    //     let vec_public_keys: Vec<secp256k1_zkp::PublicKey> = oracle_infos
+    //         .iter()
+    //         .map(|oracle_info| {
+    //             let x_only_pubkey = &oracle_info.public_key;
+    //             dlc::secp_utils::schnorr_pubkey_to_pubkey(x_only_pubkey).unwrap()
+    //         })
+    //         .collect();
+
+    //     let mut anticipation_public_keys: Vec<secp256k1_zkp::PublicKey> = Vec::new();
+    //     for (i, byte) in msg.iter().enumerate() {
+    //         if *byte == 1 {
+    //             anticipation_public_keys.push(vec_public_keys[i]);
+    //         }
+    //     }
+
+    //     let mut pk_references: Vec<&secp256k1_zkp::PublicKey> =
+    //         anticipation_public_keys.iter().collect();
+
+    //     let nonce = dlc::secp_utils::schnorr_pubkey_to_pubkey(nonce);
+    //     //pk_references.push(&nonce.unwrap());
+
+    //     let sum_anticipation_point = secp_utils::sum_compute_anticipation_point(
+    //         SECP256K1,
+    //         &pk_references, /*nonce &msg*/
+    //     );
+
+    //     assert!(sum_anticipation_point.is_ok());
+    // }
 }

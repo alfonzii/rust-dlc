@@ -7,8 +7,8 @@ use secp256k1_sys::{
     types::{c_int, c_uchar, c_void, size_t},
     CPtr, SchnorrSigExtraParams,
 };
-use secp256k1_zkp::hashes::Hash;
 use secp256k1_zkp::hashes::*;
+use secp256k1_zkp::{hashes::Hash, SecretKey};
 use secp256k1_zkp::{
     schnorr::Signature as SchnorrSignature, KeyPair, Message, PublicKey, Scalar, Secp256k1,
     Signing, Verification, XOnlyPublicKey,
@@ -71,11 +71,23 @@ pub fn schnorrsig_compute_sig_point<C: Verification>(
 }
 
 /// Compute an anticipation point using sum method for the given public keys, nonce and message.
-pub fn sum_compute_sig_point<C: Verification>(
+pub fn sum_compute_anticipation_point<C: Verification>(
     _secp: &Secp256k1<C>,
     pk_refs_nonce: &[&PublicKey], // The public keys and nonce in one array
 ) -> Result<PublicKey, Error> {
     Ok(PublicKey::combine_keys(&pk_refs_nonce)?)
+}
+
+/// Compute an oracle attestation using sum method for the given secret keys, nonce and message.
+pub fn sum_compute_oracle_attestation<C: Verification>(
+    _secp: &Secp256k1<C>,
+    sk_nonce_arr: &[SecretKey], // The secret keys and nonce in one array
+) -> Result<SecretKey, Error> {
+    let mut sk_sum = sk_nonce_arr[0];
+    for sk in &sk_nonce_arr[1..] {
+        sk_sum = sk_sum.add_tweak(&(*sk).into()).unwrap();
+    }
+    Ok(sk_sum)
 }
 
 /// Decompose a bip340 signature into a nonce and a secret key (as byte array)

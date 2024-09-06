@@ -6,7 +6,7 @@ use criterion::{black_box, criterion_group, criterion_main, Criterion};
 use dlc::create_dlc_transactions;
 use dlc::secp_utils::schnorr_pubkey_to_pubkey;
 use dlc::secp_utils::schnorrsig_compute_sig_point;
-use dlc::secp_utils::sum_compute_sig_point;
+use dlc::secp_utils::sum_compute_anticipation_point;
 use dlc::DlcTransactions;
 use dlc::OracleInfo;
 use dlc::PartyParams;
@@ -332,6 +332,8 @@ fn generate_256_messages() -> Vec<Message> {
 
 /// Extract and filter public keys from oracle info vector based on message 1 and 0 values.
 /// If message\[i\] == 1, then add oracle_infos\[i\] to the output vector.
+///
+/// Messsage needs correct format and length, otherwise unexpected results may occur.
 fn extract_filter_pubkeys_from_oracleinfos(
     oracle_infos: &[OracleInfo],
     message: &Message,
@@ -390,7 +392,7 @@ pub fn sum_anticipation_bench(c: &mut Criterion) {
     let vec_refs_pks_nonce: Vec<&PublicKey> = vec_public_keys.iter().collect();
 
     c.bench_function("sum_anticipation", |b| {
-        b.iter(|| sum_compute_sig_point(SECP256K1, &vec_refs_pks_nonce));
+        b.iter(|| sum_compute_anticipation_point(SECP256K1, &vec_refs_pks_nonce));
     });
 }
 

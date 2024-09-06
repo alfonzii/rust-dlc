@@ -35,6 +35,7 @@ use secp256k1_zkp::{
     ecdsa::Signature, EcdsaAdaptorSignature, Message, PublicKey, Secp256k1, SecretKey,
     Verification, XOnlyPublicKey,
 };
+use secp256k1_zkp::{KeyPair, Parity};
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
 use std::fmt;
@@ -181,6 +182,39 @@ pub struct OracleInfo {
     pub public_key: XOnlyPublicKey,
     /// The nonces that the oracle will use to attest to the event.
     pub nonces: Vec<XOnlyPublicKey>,
+}
+
+/// Structure containing oracle (multipub type) information for a single event
+#[derive(Clone)]
+pub struct MultiPubOracleInfo {
+    /// The public keys of the oracle with their respective parities.
+    pub pubkeys_parity_pairs: Vec<(XOnlyPublicKey, Parity)>,
+    /// The nonce that the oracle will use to attest to the event with its parity.
+    pub nonce_parity_pair: (XOnlyPublicKey, Parity),
+}
+
+impl MultiPubOracleInfo {
+    /// Filter the public keys and nonces based on the message.
+    /// Convert the public keys and nonce from XOnlyPublicKey to PublicKey.
+    /// Merge the public keys and nonce into a single vector.
+    pub fn filter_convert_merge_public_keys_and_nonce(
+        &self,
+        outcome_msg: &Message,
+    ) -> Vec<PublicKey> {
+        let mut merged_keys = self
+            .pubkeys_parity_pairs
+            .iter()
+            .enumerate()
+            .filter(|&(i, _)| outcome_msg[i] != 0)
+            .map(|(_, (xpk, par))| xpk.public_key(*par))
+            .collect::<Vec<PublicKey>>();
+        merged_keys.push(
+            self.nonce_parity_pair
+                .0
+                .public_key(self.nonce_parity_pair.1),
+        );
+        merged_keys
+    }
 }
 
 /// An error code.
@@ -712,7 +746,24 @@ pub fn get_adaptor_point_from_oracle_info<C: Verification>(
     )?)
 }
 
+/// Get the adaptor point from the multipub oracle information.
+///
+/// This function takes a secp256k1 context, a `MultiPubOracleInfo` struct, and a `Message` struct as input.
+/// It filters, converts, and merges the public keys and nonces from the `MultiPubOracleInfo` struct based on the `Message` struct.
+/// It then computes the anticipation point using the sum of the merged keys and returns it as a `PublicKey`.
+pub fn get_adaptor_point_from_multipub_oracle_info<C: Verification>(
+    secp: &Secp256k1<C>,
+    oracle_multipub_info: &MultiPubOracleInfo,
+    output_msg: &Message,
+) -> Result<PublicKey, Error> {
+    let merged_keys = oracle_multipub_info.filter_convert_merge_public_keys_and_nonce(output_msg);
+    let refs_merged_keys: Vec<&PublicKey> = merged_keys.iter().collect();
+    let anticipation_point = secp_utils::sum_compute_anticipation_point(secp, &refs_merged_keys)?;
+    Ok(anticipation_point)
+}
+
 /// Create an adaptor signature for the given cet using the provided adaptor point.
+
 pub fn create_cet_adaptor_sig_from_point<C: secp256k1_zkp::Signing>(
     secp: &secp256k1_zkp::Secp256k1<C>,
     cet: &Transaction,
@@ -743,11 +794,35 @@ pub fn create_cet_adaptor_sig_from_oracle_info(
     fund_output_value: u64,
     msgs: &[Vec<Message>],
 ) -> Result<EcdsaAdaptorSignature, Error> {
+    // INFO: teoreticky by malo stacit zamenit funkciu za nieco, co dava nas adaptor point -> bez schnorra
     let adaptor_point = get_adaptor_point_from_oracle_info(secp, oracle_infos, msgs)?;
     create_cet_adaptor_sig_from_point(
         secp,
         cet,
         &adaptor_point,
+        funding_sk,
+        funding_script_pubkey,
+        fund_output_value,
+    )
+}
+
+/// \[MultiPub version\] Create an adaptor signature for the given cet using multipub oracle info.
+pub fn create_cet_adaptor_sig_from_multipub_oracle_info(
+    secp: &secp256k1_zkp::Secp256k1<secp256k1_zkp::All>,
+    cet: &Transaction,
+    oracle_multipub_info: &MultiPubOracleInfo,
+    funding_sk: &SecretKey,
+    funding_script_pubkey: &Script,
+    fund_output_value: u64,
+    output_msg: &Message,
+) -> Result<EcdsaAdaptorSignature, Error> {
+    let anticipation_point =
+        get_adaptor_point_from_multipub_oracle_info(secp, oracle_multipub_info, output_msg)?;
+
+    create_cet_adaptor_sig_from_point(
+        secp,
+        cet,
+        &anticipation_point,
         funding_sk,
         funding_script_pubkey,
         fund_output_value,
@@ -807,6 +882,36 @@ pub fn create_cet_adaptor_sigs_from_oracle_info(
         .collect()
 }
 
+/// \[MultiPub version\] Create a set of adaptor signatures for the given cet/message pairs.
+pub fn create_cet_adaptor_sigs_from_multipub_oracle_info(
+    secp: &secp256k1_zkp::Secp256k1<secp256k1_zkp::All>,
+    cets: &[Transaction],
+    oracle_multipub_info: &MultiPubOracleInfo,
+    funding_sk: &SecretKey,
+    funding_script_pubkey: &Script,
+    fund_output_value: u64,
+    msgs: &[Message],
+) -> Result<Vec<EcdsaAdaptorSignature>, Error> {
+    if msgs.len() != cets.len() {
+        return Err(Error::InvalidArgument);
+    }
+
+    cets.iter()
+        .zip(msgs.iter())
+        .map(|(cet, msg)| {
+            create_cet_adaptor_sig_from_multipub_oracle_info(
+                secp,
+                cet,
+                oracle_multipub_info,
+                funding_sk,
+                funding_script_pubkey,
+                fund_output_value,
+                msg,
+            )
+        })
+        .collect()
+}
+
 fn signatures_to_secret(signatures: &[Vec<SchnorrSignature>]) -> Result<SecretKey, Error> {
     let s_values = signatures
         .iter()
@@ -839,6 +944,7 @@ pub fn sign_cet<C: secp256k1_zkp::Signing>(
     funding_script_pubkey: &Script,
     fund_output_value: u64,
 ) -> Result<(), Error> {
+    //
     let adaptor_secret = signatures_to_secret(oracle_signatures)?;
     let adapted_sig = adaptor_signature.decrypt(&adaptor_secret)?;
 
@@ -856,8 +962,38 @@ pub fn sign_cet<C: secp256k1_zkp::Signing>(
     Ok(())
 }
 
+/// \[MultiPub version\] Sign the given cet using own private key, adapt
+/// the counter party signature and place both signatures and the funding
+/// multi sig script pubkey on the witness stack
+pub fn sign_cet_multipub<C: secp256k1_zkp::Signing>(
+    secp: &secp256k1_zkp::Secp256k1<C>,
+    cet: &mut Transaction,
+    adaptor_signature: &EcdsaAdaptorSignature,
+    oracle_attestation: &SecretKey,
+    funding_sk: &SecretKey,
+    other_pk: &PublicKey,
+    funding_script_pubkey: &Script,
+    fund_output_value: u64,
+) -> Result<(), Error> {
+    let adapted_sig = adaptor_signature.decrypt(&oracle_attestation)?;
+
+    util::sign_multi_sig_input(
+        secp,
+        cet,
+        &adapted_sig,
+        other_pk,
+        funding_sk,
+        funding_script_pubkey,
+        fund_output_value,
+        0,
+    )?;
+
+    Ok(())
+}
+
 /// Verify that a given adaptor signature for a given cet is valid with respect
 /// to an adaptor point.
+
 pub fn verify_cet_adaptor_sig_from_point(
     secp: &Secp256k1<secp256k1_zkp::All>,
     adaptor_sig: &EcdsaAdaptorSignature,
@@ -896,6 +1032,31 @@ pub fn verify_cet_adaptor_sig_from_oracle_info(
     )
 }
 
+/// \[MultiPub version\] Verify that a given adaptor signature for a given cet is valid
+///  with respect to a multipub oracle public keys sum, nonce and a given message.
+pub fn verify_cet_adaptor_sig_from_multipub_oracle_info(
+    secp: &Secp256k1<secp256k1_zkp::All>,
+    adaptor_sig: &EcdsaAdaptorSignature,
+    cet: &Transaction,
+    oracle_multipub_info: &MultiPubOracleInfo,
+    pubkey: &PublicKey,
+    funding_script_pubkey: &Script,
+    total_collateral: u64,
+    output_msg: &Message,
+) -> Result<(), Error> {
+    let adaptor_point =
+        get_adaptor_point_from_multipub_oracle_info(secp, oracle_multipub_info, output_msg)?;
+    verify_cet_adaptor_sig_from_point(
+        secp,
+        adaptor_sig,
+        cet,
+        &adaptor_point,
+        pubkey,
+        funding_script_pubkey,
+        total_collateral,
+    )
+}
+
 /// Verify a signature for a given transaction input.
 pub fn verify_tx_input_sig<V: Verification>(
     secp: &Secp256k1<V>,
@@ -909,6 +1070,26 @@ pub fn verify_tx_input_sig<V: Verification>(
     let sig_hash_msg = util::get_sig_hash_msg(tx, input_index, script_pubkey, value)?;
     secp.verify_ecdsa(&sig_hash_msg, signature, pk)?;
     Ok(())
+}
+
+/// Filter secret keys based on the message.
+/// Merge filtered keys and secret nonce into a single vector.
+pub fn filter_merge_secret_keys_and_nonce(
+    oracle_keypairs: &Vec<KeyPair>,
+    oracle_nonce_kp: &KeyPair,
+    outcome_msg: &Message,
+) -> Vec<SecretKey> {
+    let filtered_keys: Vec<SecretKey> = oracle_keypairs
+        .iter()
+        .enumerate()
+        .filter(|(index, _)| outcome_msg[*index] == 1)
+        .map(|(_, keypair)| keypair.secret_key())
+        .collect();
+
+    let mut filtered_keys_and_nonce: Vec<SecretKey> = filtered_keys;
+    filtered_keys_and_nonce.push(oracle_nonce_kp.secret_key());
+
+    filtered_keys_and_nonce
 }
 
 #[cfg(test)]
@@ -1302,6 +1483,8 @@ mod tests {
 
     #[test]
     fn create_cet_adaptor_sig_is_valid() {
+        let start = std::time::Instant::now();
+
         // Arrange
         let secp = Secp256k1::new();
         let mut rng = secp256k1_zkp::rand::thread_rng();
@@ -1321,9 +1504,10 @@ mod tests {
         .unwrap();
 
         let cets = dlc_txs.cets;
-        const NB_ORACLES: usize = 3;
+        const NB_ORACLES: usize = 1;
         const NB_OUTCOMES: usize = 2;
         const NB_DIGITS: usize = 20;
+        // INFO: v nasom pripade nasledujuce maju o 1 vektor menej lebo orakulum je len 1
         let mut oracle_infos: Vec<OracleInfo> = Vec::with_capacity(NB_ORACLES);
         let mut oracle_sks: Vec<KeyPair> = Vec::with_capacity(NB_ORACLES);
         let mut oracle_sk_nonce: Vec<Vec<[u8; 32]>> = Vec::with_capacity(NB_ORACLES);
@@ -1355,9 +1539,10 @@ mod tests {
                 rng.fill_bytes(&mut sk_nonce);
                 let oracle_r_kp = KeyPair::from_seckey_slice(&secp, &sk_nonce).unwrap();
                 let nonce = XOnlyPublicKey::from_keypair(&oracle_r_kp).0;
+                // INFO: vytvorime oracle attestation t_i (asi?)
                 let sig = secp_utils::schnorrsig_sign_with_nonce(
                     &secp,
-                    &messages[0][i][j],
+                    &messages[0][i][j], // INFO: kedze mame len 1 orakulum, tak pre nas plati [0][0][j]
                     &oracle_kp,
                     &sk_nonce,
                 );
@@ -1431,6 +1616,9 @@ mod tests {
             &offer_party_params.fund_pubkey,
         )
         .expect("Invalid decrypted adaptor signature");
+
+        let duration = start.elapsed();
+        println!("Test executed in: {:?}", duration);
     }
 
     #[test]
@@ -1530,5 +1718,159 @@ mod tests {
             )
             .expect("Could not find fund output");
         }
+    }
+
+    #[test]
+    fn secret_keys_addition_test() {
+        let mut rng = secp256k1_zkp::rand::thread_rng();
+        let sk1 = SecretKey::new(&mut rng);
+        let _sk2 = SecretKey::new(&mut rng);
+
+        /// The value one as big-endian array of bytes.
+        const TWO: [u8; 32] = [
+            0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+            0, 0, 2,
+        ];
+
+        let scalar = Scalar::from_be_bytes(TWO).unwrap();
+
+        // println!("sk1: {:?}", sk1);
+        // println!("sk2: {:?}", sk2);
+        // println!("scalar: {:?}", scalar);
+
+        let sk3 = sk1.add_tweak(&sk1.into());
+        let sk4 = sk1.mul_tweak(&scalar);
+
+        assert_eq!(sk3, sk4);
+    }
+
+    // Single multipub oracle test
+    #[test]
+    fn create_cet_multipub_adaptor_sig_is_valid() {
+        let start = std::time::Instant::now();
+
+        // Arrange
+        let secp = Secp256k1::new();
+        let mut rng = secp256k1_zkp::rand::thread_rng();
+        let (offer_party_params, offer_fund_sk) = get_party_params(1000000000, 100000000, None);
+        let (accept_party_params, accept_fund_sk) = get_party_params(1000000000, 100000000, None);
+
+        let dlc_txs = create_dlc_transactions(
+            &offer_party_params,
+            &accept_party_params,
+            &payouts(),
+            100,
+            4,
+            10,
+            10,
+            0,
+        )
+        .unwrap();
+
+        let cets = dlc_txs.cets;
+        const NB_OUTCOMES: usize = 2;
+        const NB_DIGITS: usize = 32;
+
+        // Declaration of all needed attributes for the multipub oracle
+        let oracle_keypairs: Vec<KeyPair>; // p0 ... p_NB_DIGITS-1
+        let oracle_nonce_kp: KeyPair; // r
+        let oracle_multipub_info: MultiPubOracleInfo; // P0 ... P_NB_DIGITS-1 & R
+
+        // Initialize declared attributes
+        oracle_keypairs = (0..NB_DIGITS)
+            .map(|_| KeyPair::new(&secp, &mut rng))
+            .collect();
+        oracle_nonce_kp = KeyPair::new(&secp, &mut rng);
+        oracle_multipub_info = MultiPubOracleInfo {
+            pubkeys_parity_pairs: oracle_keypairs
+                .iter()
+                .map(|kp| kp.x_only_public_key())
+                .collect(),
+            nonce_parity_pair: XOnlyPublicKey::from_keypair(&oracle_nonce_kp),
+        };
+
+        // Generate random outcomes with bytes of value only 1 or 0 (we simulate bits)
+        let mut outcomes: Vec<Message> = Vec::with_capacity(NB_OUTCOMES);
+        for _ in 0..NB_OUTCOMES {
+            let mut array: [u8; NB_DIGITS] = [0; NB_DIGITS];
+            for i in 0..NB_DIGITS {
+                array[i] = rng.gen::<bool>() as u8;
+            }
+            let outcome = Message::from_slice(&array).unwrap();
+            outcomes.push(outcome);
+        }
+
+        // TODO - vieme ich scitavat sposobom aky je v predoslom teste, tj cez add_tweak, ale to sa musi robit po jednom
+        // - nevidim tam ziadnu funkciu, ktora by ich spocitala naraz, ako je pri public keys combine_keys()
+        // teoreticky by vsak mohlo fungovat (a byt potencialne rychlejsie) previest ich na bajty, tie scitat a potom z nich vyrobit nazad secret key modulo curve order
+
+        // Compute the sum of secret keys and nonce - this is the secret key for the oracle attestation
+        let merged_sks_nonce =
+            filter_merge_secret_keys_and_nonce(&oracle_keypairs, &oracle_nonce_kp, &outcomes[0]);
+        let attestation = secp_utils::sum_compute_oracle_attestation(&secp, &merged_sks_nonce)
+            .unwrap_or_else(|err| panic!("Error computing attestation: {}", err));
+
+        // ps, r, R, Ps, t
+
+        let funding_script_pubkey = make_funding_redeemscript(
+            &offer_party_params.fund_pubkey,
+            &accept_party_params.fund_pubkey,
+        );
+        let fund_output_value = dlc_txs.fund.output[0].value;
+
+        // Act
+        let cet_adaptor_sigs = create_cet_adaptor_sigs_from_multipub_oracle_info(
+            &secp,
+            &cets,
+            &oracle_multipub_info,
+            &offer_fund_sk,
+            &funding_script_pubkey,
+            fund_output_value,
+            &outcomes,
+        )
+        .unwrap();
+
+        let sign_res = sign_cet_multipub(
+            &secp,
+            &mut cets[0].clone(),
+            &cet_adaptor_sigs[0],
+            &attestation,
+            &accept_fund_sk,
+            &offer_party_params.fund_pubkey,
+            &funding_script_pubkey,
+            fund_output_value,
+        );
+
+        //let adaptor_secret = signatures_to_secret(&oracle_sigs).unwrap();
+        let adapted_sig = cet_adaptor_sigs[0].decrypt(&attestation).unwrap();
+
+        // Assert
+        assert!(cet_adaptor_sigs.iter().enumerate().all(|(i, x)| {
+            verify_cet_adaptor_sig_from_multipub_oracle_info(
+                &secp,
+                x,
+                &cets[i],
+                &oracle_multipub_info,
+                &offer_party_params.fund_pubkey,
+                &funding_script_pubkey,
+                fund_output_value,
+                &outcomes[i],
+            )
+            .is_ok()
+        }));
+        sign_res.expect("Error signing CET");
+        verify_tx_input_sig(
+            &secp,
+            &adapted_sig,
+            &cets[0],
+            0,
+            &funding_script_pubkey,
+            fund_output_value,
+            &offer_party_params.fund_pubkey,
+        )
+        .expect("Invalid decrypted adaptor signature");
+
+        let duration = start.elapsed();
+        println!("Test executed in: {:?}", duration);
     }
 }
